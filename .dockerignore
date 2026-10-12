@@ -1,0 +1,16 @@
+# Only runtime sources and the Docker build definition enter the build context.
+**
+!requirements.txt
+!server.py
+!telegram_backend.py
+!oauth_owner.py
+!file_downloads.py
+!tool_models.py
+!file_store.py
+!action_store.py
+!extended_backend.py
+!media_processing.py
+!upload_routes.py
+!extension_tools.py
+!deploy/
+!deploy/Dockerfile
