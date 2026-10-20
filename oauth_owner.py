@@ -32,6 +32,9 @@ MAX_BODY = 8192
 CODE_TTL = 300
 ACCESS_TTL = 3600
 REFRESH_TTL = 30 * 86400
+# A rotated refresh token stays usable briefly (parallel client workers) and
+# while its successor was never used (the client lost the rotation response).
+REUSE_GRACE = 120
 FORM_TTL = 600
 _PKCE = re.compile(r"^[A-Za-z0-9_-]{43}$")
 _VERIFIER = re.compile(r"^[A-Za-z0-9._~-]{43,128}$")
@@ -178,6 +181,11 @@ class OwnerOAuth:
                     resource TEXT NOT NULL, scopes TEXT NOT NULL,
                     expires_at REAL NOT NULL, family TEXT NOT NULL);
             """)
+            columns = {row[1] for row in db.execute("PRAGMA table_info(refresh_tokens)")}
+            if "parent" not in columns:
+                db.execute("ALTER TABLE refresh_tokens ADD COLUMN parent TEXT")
+            if "rotated_at" not in columns:
+                db.execute("ALTER TABLE refresh_tokens ADD COLUMN rotated_at REAL")
             db.execute("INSERT OR IGNORE INTO settings VALUES (?, ?)",
                        ("csrf_secret", _b64(secrets.token_bytes(32))))
             self._csrf_secret = db.execute(
@@ -483,15 +491,16 @@ class OwnerOAuth:
             return self._error(error)
 
     def _issue_tokens(self, db: sqlite3.Connection, client_id: str, resource: str,
-                      scopes: str, family: str, refresh_deadline: float):
+                      scopes: str, family: str, refresh_deadline: float, parent: str | None = None):
         access, refresh = secrets.token_urlsafe(32), secrets.token_urlsafe(48)
         now = time.time()
         db.execute("DELETE FROM access_tokens WHERE expires_at < ?", (now,))
         db.execute("DELETE FROM refresh_tokens WHERE expires_at < ?", (now,))
         db.execute("INSERT INTO access_tokens VALUES (?, ?, ?, ?, ?, ?)",
                    (_digest(access), client_id, resource, scopes, now + ACCESS_TTL, family))
-        db.execute("INSERT INTO refresh_tokens VALUES (?, ?, ?, ?, ?, ?)",
-                   (_digest(refresh), client_id, resource, scopes, refresh_deadline, family))
+        db.execute("INSERT INTO refresh_tokens (digest, client_id, resource, scopes, expires_at, family, parent)"
+                   " VALUES (?, ?, ?, ?, ?, ?, ?)",
+                   (_digest(refresh), client_id, resource, scopes, refresh_deadline, family, parent))
         return {"access_token": access, "token_type": "Bearer", "expires_in": ACCESS_TTL,
                 "refresh_token": refresh, "scope": scopes}
 
@@ -500,7 +509,7 @@ class OwnerOAuth:
             data = await self._body(request)
             data.setdefault("resource", self.resource)
             if data.get("resource") != self.resource or not data.get("client_id"):
-                raise OAuthError("invalid_grant")
+                raise OAuthError("invalid_grant", reason="resource_or_client_missing")
             now = time.time()
             with self._lock, self._db() as db:
                 db.execute("BEGIN IMMEDIATE")
@@ -514,29 +523,37 @@ class OwnerOAuth:
                             or row["resource"] != data["resource"]
                             or not _VERIFIER.fullmatch(verifier)
                             or not hmac.compare_digest(row["challenge"], _b64(hashlib.sha256(verifier.encode()).digest()))):
-                        raise OAuthError("invalid_grant")
+                        raise OAuthError("invalid_grant", reason="code_rejected")
                     db.execute("DELETE FROM codes WHERE digest=?", (row["digest"],))
                     tokens = self._issue_tokens(db, row["client_id"], row["resource"],
                                                 row["scopes"], secrets.token_urlsafe(24), now + REFRESH_TTL)
                 elif data.get("grant_type") == "refresh_token":
                     row = db.execute("SELECT * FROM refresh_tokens WHERE digest=?",
                                      (_digest(data.get("refresh_token", "")),)).fetchone()
-                    if (row is None or row["expires_at"] <= now
-                            or row["client_id"] != data["client_id"] or row["resource"] != data["resource"]):
-                        raise OAuthError("invalid_grant")
+                    if row is None:
+                        raise OAuthError("invalid_grant", reason="refresh_unknown")
+                    if row["expires_at"] <= now:
+                        raise OAuthError("invalid_grant", reason="refresh_expired")
+                    if row["client_id"] != data["client_id"] or row["resource"] != data["resource"]:
+                        raise OAuthError("invalid_grant", reason="refresh_client_mismatch")
+                    if row["rotated_at"] is not None and now - row["rotated_at"] > REUSE_GRACE and db.execute(
+                            "SELECT 1 FROM refresh_tokens WHERE parent=? AND rotated_at IS NULL",
+                            (row["digest"],)).fetchone() is None:
+                        raise OAuthError("invalid_grant", reason="refresh_reused")
                     requested = data.get("scope", row["scopes"]).split()
                     if not requested or not set(requested) <= set(row["scopes"].split()):
                         raise OAuthError("invalid_scope")
-                    db.execute("DELETE FROM refresh_tokens WHERE digest=?", (row["digest"],))
-                    db.execute("DELETE FROM access_tokens WHERE family=?", (row["family"],))
+                    if row["rotated_at"] is None:
+                        db.execute("UPDATE refresh_tokens SET rotated_at=? WHERE digest=?", (now, row["digest"]))
                     tokens = self._issue_tokens(db, row["client_id"], row["resource"],
-                                                " ".join(sorted(set(requested))), row["family"], row["expires_at"])
+                                                " ".join(sorted(set(requested))), row["family"], row["expires_at"],
+                                                row["digest"])
                 else:
                     raise OAuthError("unsupported_grant_type")
             logging.getLogger("personal_telegram.oauth").info("OAuth token issued")
             return self._json(tokens)
         except OAuthError as error:
-            logging.getLogger("personal_telegram.oauth").warning("OAuth token rejected: %s", error.code)
+            logging.getLogger("personal_telegram.oauth").warning("OAuth token rejected: %s %s", error.code, error.reason or "")
             return self._error(error)
 
     def verify_token(self, token: str) -> dict | None:

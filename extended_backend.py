@@ -11,9 +11,17 @@ import subprocess
 from typing import Any
 
 from action_store import ActionStore
+from bot_interaction import AuditLog,BotInteraction,BotPolicy,keyboard_of
+from bot_admin import BotAdmin
+from channel_posts import ChannelPosts
+from bot_inline import InlineBots
+from botfather import BotFatherOps,guard_recipient,is_botfather,redact
 from file_store import FileStore
 from telegram_backend import TelegramBackend, BackendError, _operation, _chat_id, _limit, _text, _user
 from tool_models import ArticleBlock, MediaItem, MessageOptions, ContactChange, GroupChange, StoryOptions
+
+
+MANAGE_ACTIONS=frozenset({'manage_contact','manage_group','bot_admin','edit_post','replace_post_media','delete_post','pin_post','botfather'})
 
 
 def tl():
@@ -51,9 +59,12 @@ def returned_ids(result):
     return list(dict.fromkeys(found))
 
 
-class ExtendedBackend(TelegramBackend):
-    def __init__(self,*args,files=None,actions=None,**kwargs):
+class ExtendedBackend(BotInteraction,BotAdmin,ChannelPosts,InlineBots,BotFatherOps,TelegramBackend):
+    def __init__(self,*args,files=None,actions=None,bot_policy=None,allow_botfather=None,**kwargs):
         super().__init__(*args,**kwargs)
+        self.allow_botfather=os.environ.get('TG_ALLOW_BOTFATHER','false').strip().lower() in {'1','true','yes'} if allow_botfather is None else bool(allow_botfather)
+        self.bot_policy=bot_policy if bot_policy is not None else BotPolicy.from_env()
+        self.audit=AuditLog(self.drafts_db.parent/'audit.sqlite',self._clock)
         self.files=files or FileStore(self.output_dir.parent/'staged')
         self.actions=actions or ActionStore(self.drafts_db.parent/'actions.sqlite',self._clock)
         self._known_users={}
@@ -107,6 +118,15 @@ class ExtendedBackend(TelegramBackend):
     def _pack(self,message,chat):
         result=self._message(message,chat['chat_id'])
         result['message_url']=self._link(chat,message.id)
+        if is_botfather(chat):
+            result['text']=redact(result['text'])
+            result['links']=[redact(link) for link in result.get('links',[])]
+        keyboard=keyboard_of(chat['chat_id'],message)
+        if keyboard:
+            result['keyboard']=keyboard
+        edited=getattr(message,'edit_date',None)
+        if isinstance(edited,datetime):
+            result['edited_at']=edited.isoformat()
         return result
 
     @_operation
@@ -298,7 +318,12 @@ class ExtendedBackend(TelegramBackend):
 
     @_operation
     async def prepare_send(self,chat_id,text='',media=None,options=None):
+        preview,payload=await self._build_send(chat_id,text,media,options)
+        return self.actions.prepare(payload,preview)
+
+    async def _build_send(self,chat_id,text='',media=None,options=None):
         entity,chat=await self._target(chat_id)
+        guard_recipient(chat)
         options=self._options(options)
         media=[MediaItem.model_validate(item).model_dump() for item in (media or [])]
         if len(media)>10:
@@ -309,19 +334,32 @@ class ExtendedBackend(TelegramBackend):
             kinds={groups.get(item['kind'],'unsupported') for item in media}
             if len(kinds)!=1 or 'unsupported' in kinds or (kinds=={'visual'} and any(item['original'] for item in media)):
                 raise BackendError('unsupported_album','Use all photos/videos with original=false, all documents, or all audio. Voice notes/stickers/video notes cannot form an album.')
+        replied=None
         if options['reply_to']:
-            await self._check_messages(entity,chat,[options['reply_to']])
+            source=(await self._check_messages(entity,chat,[options['reply_to']]))[0]
+            replied={'message_id':source.id,'sender_id':getattr(source,'sender_id',None),'text':(getattr(source,'message','') or '')[:300]}
         preview={'action':'send_media' if media else 'send_message','recipient':chat,'text':text,'media':self._media_preview(media),'options':options}
+        if replied:
+            preview['reply_to_message']=replied
+        if getattr(entity,'bot',False):
+            preview['recipient_is_bot']=True
+        command=re.match(r'^/([A-Za-z0-9_]{1,32})(?:@([A-Za-z0-9_]{3,32}))?(?:\s+(.*))?$',text,re.S)
+        if command:
+            preview['bot_command']={'command':'/'+command.group(1),'bot':command.group(2),'arguments':command.group(3) or ''}
         payload={**preview,'chat_id':chat['chat_id'],'random_id':secrets.randbits(62)+1}
-        return self.actions.prepare(payload,preview)
+        return preview,payload
 
     @_operation
-    async def prepare_message_action(self,action,chat_id,message_ids=None,text='',emoji=None,custom_emoji_id=None,target_chat_id=None,options=None,revoke=True):
+    async def prepare_message_action(self,action,chat_id,message_ids=None,text='',emoji=None,custom_emoji_id=None,target_chat_id=None,options=None,revoke=True,drop_author=False):
         if action not in ('reply','forward','edit','delete','react','pin','unpin'):
             raise BackendError('invalid_input','Unsupported message action.')
         entity,chat=await self._resolve(chat_id)
         message_ids=message_ids or []
+        if action in ('reply','edit','forward'):
+            guard_recipient(chat)
         selected=await self._check_messages(entity,chat,message_ids)
+        if action=='edit' and selected:
+            self._editable(chat,selected[0])
         options=self._options(options)
         preview={'action':action,'source_chat':chat,'message_ids':message_ids,'selected_messages':[self._pack(m,chat) for m in selected]}
         payload={'action':action,'chat_id':chat['chat_id'],'message_ids':message_ids,'options':options,'revoke':bool(revoke),'random_ids':[secrets.randbits(63) for _ in message_ids]}
@@ -331,7 +369,9 @@ class ExtendedBackend(TelegramBackend):
             payload['text']=preview['text']=_text(text,4096,'text')
         if action=='forward':
             _,target=await self._target(target_chat_id)
+            guard_recipient(target)
             payload['target_chat_id']=target['chat_id']
+            payload['drop_author']=preview['drop_author']=bool(drop_author)
             preview['recipient']=target
         if action=='react':
             if len(message_ids)!=1 or (emoji is not None and custom_emoji_id is not None):
@@ -468,7 +508,7 @@ class ExtendedBackend(TelegramBackend):
         payload=json.loads(row['payload']) if row['payload'] else {}
         # Consumed actions retain the preview, allowing safe scope checks on repeats.
         action=payload.get('action') or json.loads(row['preview']).get('action')
-        return 'telegram.manage' if action in ('manage_contact','manage_group') else 'telegram.send'
+        return 'telegram.manage' if action in MANAGE_ACTIONS else 'telegram.send'
 
     def article_publication_evidence(self,account_id=None):
         """Only a persisted successful publish AND read-back is live acceptance."""
@@ -662,22 +702,47 @@ class ExtendedBackend(TelegramBackend):
     async def execute_action(self,draft_id,confirmation_hash):
         if not self.allow_send:
             raise BackendError('send_disabled','Outbound actions are disabled on this server.')
+        await self._preflight(draft_id,confirmation_hash)
         payload,prior=self.actions.claim(draft_id,confirmation_hash)
         if prior is not None:
             return prior
+        where=(payload.get('chat_id'),(payload.get('message_ids') or [payload.get('message_id')])[0])
         try:
             await self._ready()
             result=await self._execute(payload)
             result.update({'draft_id':draft_id,'executed':True,'already_executed':False})
             self.actions.finish(draft_id,result)
+            self.audit.record(payload['action'],*where,'executed')
             return result
-        except BaseException:
-            self.actions.finish(draft_id)
+        except BaseException as error:
+            safe=getattr(error,'retry_safe',False)
+            if safe:
+                self.actions.release(draft_id)
+            else:
+                self.actions.finish(draft_id)
+            self.audit.record(payload['action'],*where,getattr(error,'code',type(error).__name__) if safe or isinstance(error,BackendError) else 'uncertain')
+            raise
+
+    async def _submit(self,request,p):
+        """Send; when link buttons were requested and Telegram refuses them, report it as a clean no-send failure."""
+        try:
+            return await self._client(request)
+        except Exception as error:
+            if p.get('buttons') and getattr(error,'message','') in ('REPLY_MARKUP_INVALID','BUTTON_URL_INVALID','BUTTON_TYPE_INVALID','BOT_METHOD_INVALID'):
+                failure=BackendError('buttons_not_supported','Telegram refused link buttons from this account. Nothing was published; publish without buttons or let a bot post.')
+                failure.retry_safe=True
+                raise failure from None
             raise
 
     async def _execute(self,p):
         f,t,u=tl()
         action=p['action']
+        if action=='press_button':
+            return await self._press(p)
+        if action=='bot_admin':
+            return await self._bot_admin(p)
+        if action=='botfather':
+            return await self._botfather(p)
         if action=='manage_group':
             return await self._group(p)
         if action=='manage_contact':
@@ -700,8 +765,9 @@ class ExtendedBackend(TelegramBackend):
             if action=='reply':
                 options['reply_to']=p['message_ids'][0]
             request=f.messages.SendMessageRequest(peer=peer,message=text,entities=entities,random_id=p.get('random_id',p.get('random_ids',[0])[0]),
-                reply_to=self._reply(options),silent=options['silent'],schedule_date=date(options['schedule_at']),no_webpage=not options['link_preview'])
-            result=await self._client(request)
+                reply_to=self._reply(options),silent=options['silent'],schedule_date=date(options['schedule_at']),no_webpage=not options['link_preview'],
+                reply_markup=self._markup(p.get('buttons')))
+            result=await self._submit(request,p)
         elif action=='send_media':
             media=[]
             for index,item in enumerate(p['media']):
@@ -709,8 +775,9 @@ class ExtendedBackend(TelegramBackend):
                 caption,entities=self._parsed(item['caption'] or (p['text'] if index==0 else ''),options['parse_mode'])
                 if len(p['media'])==1:
                     request=f.messages.SendMediaRequest(peer=peer,media=uploaded,message=caption,entities=entities,
-                        random_id=p['random_id'],reply_to=self._reply(options),silent=options['silent'],schedule_date=date(options['schedule_at']))
-                    result=await self._client(request)
+                        random_id=p['random_id'],reply_to=self._reply(options),silent=options['silent'],schedule_date=date(options['schedule_at']),
+                        reply_markup=self._markup(p.get('buttons')))
+                    result=await self._submit(request,p)
                 else:
                     stored=await self._client(f.messages.UploadMediaRequest(peer=peer,media=uploaded))
                     uploaded=t.InputMediaPhoto(u.get_input_photo(stored.photo)) if getattr(stored,'photo',None) else t.InputMediaDocument(u.get_input_document(stored.document))
@@ -720,13 +787,30 @@ class ExtendedBackend(TelegramBackend):
         elif action=='forward':
             target,target_chat=await self._resolve(p['target_chat_id'])
             result=await self._client(f.messages.ForwardMessagesRequest(from_peer=peer,id=p['message_ids'],random_id=p['random_ids'],to_peer=await self._client.get_input_entity(target),
-                  schedule_date=date(options['schedule_at']),silent=options['silent']))
+                  schedule_date=date(options['schedule_at']),silent=options['silent'],drop_author=bool(p.get('drop_author',False))))
             chat=target_chat
-        elif action=='edit':
+        elif action in ('edit','edit_post'):
             text,entities=self._parsed(p['text'],options['parse_mode'])
-            result=await self._client(f.messages.EditMessageRequest(peer=peer,id=p['message_ids'][0],message=text,entities=entities,no_webpage=not options['link_preview']))
+            try:
+                result=await self._client(f.messages.EditMessageRequest(peer=peer,id=p['message_ids'][0],message=text,entities=entities,no_webpage=not options['link_preview']))
+            except Exception as error:
+                if type(error).__name__=='MessageAuthorRequiredError':
+                    failure=BackendError('not_editable_by_user','Telegram says only the author can edit this message (for a bot in a private chat: use the bot buttons or commands). Nothing was changed.')
+                    failure.retry_safe=True
+                    raise failure from None
+                raise
             return {'edited':True,'chat':chat,'message_ids':p['message_ids']}
-        elif action=='delete':
+        elif action=='replace_post_media':
+            text,entities=self._parsed(p['text'],'plain')
+            media=await self._media(p['media'],peer)
+            result=await self._client(f.messages.EditMessageRequest(peer=peer,id=p['message_ids'][0],message=text,media=media,entities=entities,no_webpage=True))
+            return {'edited':True,'media_replaced':True,'chat':chat,'message_ids':p['message_ids']}
+        elif action=='send_inline_result':
+            result=await self._send_inline(p,peer)
+        elif action=='pin_post':
+            result=await self._client.pin_message(entity,p['message_ids'][0],notify=False) if not p['unpin'] else await self._client.unpin_message(entity,p['message_ids'][0])
+            return {'changed':True,'action':'unpin' if p['unpin'] else 'pin','chat':chat,'message_ids':p['message_ids']}
+        elif action in ('delete','delete_post'):
             await self._client.delete_messages(entity,p['message_ids'],revoke=p['revoke'])
             return {'deleted':True,'chat':chat,'message_ids':p['message_ids'],'revoke':p['revoke']}
         elif action in ('pin','unpin'):

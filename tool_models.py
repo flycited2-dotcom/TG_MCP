@@ -78,3 +78,13 @@ class StoryOptions(StrictModel):
     pinned: bool = False
     noforwards: bool = False
     links: list[StoryLink] = Field(default_factory=list,max_length=5)
+
+
+class LinkButton(StrictModel):
+    text: str = Field(min_length=1, max_length=64)
+    url: str = Field(min_length=8, max_length=2048)
+
+
+class CommandSpec(StrictModel):
+    command: str = Field(min_length=1, max_length=33)
+    description: str = Field(min_length=3, max_length=256)

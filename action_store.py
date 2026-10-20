@@ -75,6 +75,12 @@ class ActionStore:
         finally:
             db.close()
 
+    def release(self,identifier):
+        """Return a claimed draft to 'prepared' after a failure that provably sent nothing."""
+        with self.db() as db:
+            db.execute("UPDATE actions SET state='prepared' WHERE id=? AND state='sending'",(identifier,))
+        db.close()
+
     def finish(self,identifier,result=None):
         with self.db() as db:
             db.execute("UPDATE actions SET state=?,payload='',result=? WHERE id=?",

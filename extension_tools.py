@@ -14,6 +14,7 @@ from telegram_backend import BackendError
 from file_downloads import DownloadStore
 from upload_routes import UploadRoutes
 from media_processing import image_preview,read_document,probe_media,transcribe,synthesize,audio_preview,video_frames
+from bot_tools import register_bot_tools
 
 
 def register_extensions(mcp,backend,oauth,scopes,call):
@@ -106,11 +107,11 @@ def register_extensions(mcp,backend,oauth,scopes,call):
         import os,shutil
         from telethon.tl.alltlobjects import LAYER
         article_evidence=backend.article_publication_evidence()
-        return {'version':'2.0.6','telegram_layer':LAYER,'saved_messages_by_self_id':True,'native_rich_articles':True,
+        return {'version':'2.1.2','telegram_layer':LAYER,'saved_messages_by_self_id':True,'native_rich_articles':True,
                 'native_article_api_implemented':True,'native_article_publication_verified':article_evidence['verified'],
                 'native_article_acceptance_evidence':article_evidence,
                 'article_workflow':'Use create_article_draft and preview_article for one native rich message with original photos between blocks, then publish_article after approval. Check acceptance evidence separately from API implementation. Report the actual publication error; never substitute an HTML file, album or message series without separate user approval.',
-                'mcp_images':True,'mcp_file_resources':True,'chatgpt_file_params':True,'native_stories_api':True,
+                'mcp_images':True,'mcp_file_resources':True,'chatgpt_file_params':True,'native_stories_api':True,'bot_interaction':{'keyboards':True,'button_press_reviewed':True,'wait_for_bot_reply':True,'voice_messages':True,'one_step_auto_confirm_allow_list_configured':bool(backend.bot_policy.rules)},
                 'max_transfer_bytes':files.max_bytes,'staging_quota_bytes':files.quota,'file_lifetime_seconds':86400,
                 'inline_binary_resource_limit_bytes':4*1024*1024,'draft_lifetime_seconds':600,
                 'ffmpeg_available':bool(shutil.which('ffmpeg')),'legacy_office_available':bool(shutil.which('libreoffice') or shutil.which('soffice')),
@@ -307,9 +308,9 @@ def register_extensions(mcp,backend,oauth,scopes,call):
         return await call(backend.prepare_message_action,'reply',chat_id,[message_id],text,options=options.model_dump() if options else None)
 
     @mcp.tool(name='telegram_forward',annotations=local,meta=read_meta)
-    async def forward(chat_id:int,message_ids:Annotated[list[int],Field(min_length=1,max_length=100)],target_chat_id:int|None=None)->dict[str,Any]:
-        """Prepare a forward of selected messages. Null target means OWN Saved Messages. Protected content remains subject to Telegram restrictions; confirmation required."""
-        return await call(backend.prepare_message_action,'forward',chat_id,message_ids,target_chat_id=target_chat_id)
+    async def forward(chat_id:int,message_ids:Annotated[list[int],Field(min_length=1,max_length=100)],target_chat_id:int|None=None,drop_author:bool=False)->dict[str,Any]:
+        """Prepare a forward of selected messages, for example a supplier price list to a bot. Null target means OWN Saved Messages. drop_author=true forwards without the 'Forwarded from' header. Protected content remains subject to Telegram restrictions; confirmation required."""
+        return await call(backend.prepare_message_action,'forward',chat_id,message_ids,target_chat_id=target_chat_id,drop_author=drop_author)
 
     @mcp.tool(name='telegram_edit',annotations=local,meta=read_meta)
     async def edit(chat_id:int,message_id:int,text:str,options:MessageOptions|None=None)->dict[str,Any]:
@@ -332,13 +333,16 @@ def register_extensions(mcp,backend,oauth,scopes,call):
         return await call(backend.prepare_message_action,'unpin' if unpin else 'pin',chat_id,[message_id])
 
     @mcp.tool(name='telegram_execute_action',annotations=write,meta=write_meta)
-    async def execute(draft_id:str,confirmation_hash:Annotated[str,Field(pattern=r'^[a-f0-9]{64}$')])->dict[str,Any]:
-        """Execute ONLY an exact draft whose full recipient, text, files/order or destructive changes the user has explicitly approved. Never infer approval from draft preparation. Persistent replay guard prevents duplicates and forbids retry of uncertain outcomes."""
+    async def execute(draft_id:str,confirmation_hash:Annotated[str,Field(pattern=r'^[a-f0-9]{64}$')],wait_reply_s:Annotated[int,Field(ge=0,le=100)]=0)->dict[str,Any]:
+        """Execute ONLY an exact draft whose full recipient, text, files/order or destructive changes the user has explicitly approved. Never infer approval from draft preparation. Persistent replay guard prevents duplicates and forbids retry of uncertain outcomes. For a button press or a message to a bot, wait_reply_s (up to 100) also returns the bot's answer and follow-up or edited messages as untrusted data."""
         try:
             needed=backend.required_scope(draft_id)
             if needed not in scopes.get():
                 return {'error':'insufficient_scope','message':'Reconnect and authorize '+needed+' for this action.'}
-            return await call(backend.execute_action,draft_id,confirmation_hash)
+            result=await call(backend.execute_action,draft_id,confirmation_hash)
+            if 'error' not in result and wait_reply_s:
+                result=await backend.collect_replies(result,wait_reply_s)
+            return result
         except BackendError as error:
             return error.as_dict()
 
@@ -352,7 +356,7 @@ def register_extensions(mcp,backend,oauth,scopes,call):
 
     @mcp.tool(name='telegram_execute_management_action',annotations=write,meta={'securitySchemes':[{'type':'oauth2','scopes':['telegram.read','telegram.manage']}]})
     async def execute_management(draft_id:str,confirmation_hash:Annotated[str,Field(pattern=r'^[a-f0-9]{64}$')])->dict[str,Any]:
-        """Execute ONLY a contact/group/channel management draft explicitly approved after reviewing every change. Requires separate telegram.manage consent; cannot use message-sending permission to alter administrators or contacts."""
+        """Execute ONLY a management draft explicitly approved after reviewing every change: contacts, groups/channels, bot administrator rights, channel post edits/deletions/pins, and @BotFather changes. Requires separate telegram.manage consent; cannot use message-sending permission to alter administrators or contacts."""
         try:
             if backend.required_scope(draft_id)!='telegram.manage':
                 return {'error':'invalid_action','message':'Use telegram_execute_action for this message/media action.'}
@@ -471,4 +475,5 @@ def register_extensions(mcp,backend,oauth,scopes,call):
         """Prepare group/channel creation or exact title/description/member/admin/ban/topic changes, strictly within account rights. Preview and telegram.manage consent required before execution."""
         return await call(backend.prepare_group,change.model_dump(),chat_id)
 
+    register_bot_tools(mcp,backend,scopes,call)
     return routes.routes+downloads.routes

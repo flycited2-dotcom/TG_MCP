@@ -1,0 +1,6 @@
+{
+  "bots": {
+    "flycited_bot": {"actions": ["press_button", "send_message", "send_voice"]},
+    "sendpr1ce_bot": {"actions": ["press_button"], "chat_ids": [-1001234567890]}
+  }
+}

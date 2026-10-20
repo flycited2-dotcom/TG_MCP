@@ -126,9 +126,7 @@ def test_refresh_rotation_send_scope_and_revoke(oauth):
     refreshed = client.post("/oauth/token", data=refresh_request)
     assert refreshed.status_code == 200
     rotated = refreshed.json()
-    assert server.verify_token(original["access_token"]) is None
     assert server.verify_token(rotated["access_token"])
-    assert client.post("/oauth/token", data=refresh_request).json()["error"] == "invalid_grant"
     assert client.post("/oauth/revoke", data={"client_id": client_id,
                         "token": rotated["refresh_token"]}).status_code == 200
     assert server.verify_token(rotated["access_token"]) is None
@@ -243,3 +241,43 @@ def test_loopback_port_may_vary_but_path_and_host_may_not(oauth):
 def test_register_rejects_non_loopback_http(oauth, redirect):
     _, client, _ = oauth
     assert client.post("/oauth/register", json={"redirect_uris": [redirect]}).status_code == 400
+
+
+def _refresh(server, client, client_id, token):
+    return client.post("/oauth/token", data={"grant_type": "refresh_token", "client_id": client_id,
+                       "refresh_token": token, "resource": server.resource})
+
+
+def test_lost_rotation_response_and_parallel_refresh_recover(oauth):
+    server, client, _ = oauth
+    client_id = register(client)
+    code, verifier = approve(server, client, client_id)
+    first = exchange(server, client, client_id, code, verifier).json()["refresh_token"]
+    lost = _refresh(server, client, client_id, first)
+    assert lost.status_code == 200
+    with sqlite3.connect(server.db_path) as db:
+        db.execute("UPDATE refresh_tokens SET rotated_at=rotated_at-3600 WHERE rotated_at IS NOT NULL")
+    # The client never received `lost`, so its old token must still work hours later.
+    recovered = _refresh(server, client, client_id, first)
+    assert recovered.status_code == 200, recovered.text
+    assert server.verify_token(recovered.json()["access_token"])
+    # Once a successor is actually used, the old token is dead after the grace period.
+    _refresh(server, client, client_id, recovered.json()["refresh_token"])
+    _refresh(server, client, client_id, lost.json()["refresh_token"])
+    with sqlite3.connect(server.db_path) as db:
+        db.execute("UPDATE refresh_tokens SET rotated_at=rotated_at-3600 WHERE rotated_at IS NOT NULL")
+    assert _refresh(server, client, client_id, first).json() == {"error": "invalid_grant"}
+
+
+def test_refresh_migrates_legacy_schema(oauth, tmp_path):
+    server, client, config = oauth
+    legacy = tmp_path / "legacy.sqlite"
+    with sqlite3.connect(legacy) as db:
+        db.execute("CREATE TABLE refresh_tokens (digest TEXT PRIMARY KEY, client_id TEXT NOT NULL,"
+                   " resource TEXT NOT NULL, scopes TEXT NOT NULL, expires_at REAL NOT NULL, family TEXT NOT NULL)")
+        db.execute("INSERT INTO refresh_tokens VALUES (?, 'c', ?, 'telegram.read', ?, 'f')",
+                   (hashlib.sha256(b"legacy").hexdigest(), server.resource, time.time() + 600))
+    migrated = OwnerOAuth(server.public_url, config, legacy)
+    from starlette.applications import Starlette as App
+    with TestClient(App(routes=migrated.routes), base_url=migrated.public_url) as legacy_client:
+        assert _refresh(migrated, legacy_client, "c", "legacy").status_code == 200

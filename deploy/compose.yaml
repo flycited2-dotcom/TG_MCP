@@ -21,6 +21,10 @@ services:
       TG_DATA_DIR: "/data"
       TG_ALLOW_SEND: "${TG_ALLOW_SEND:-false}"
       TG_WHISPER_MODEL: "/data/models/whisper-small"
+      # Owner-only allow list for one-step bot actions; absent file allows nothing.
+      TG_BOT_FASTPATH_FILE: "/data/bot-fastpath.json"
+      # Off by default: lets agents change the owner's own bots through @BotFather (never /token, /revoke, /deletebot).
+      TG_ALLOW_BOTFATHER: "${TG_ALLOW_BOTFATHER:-false}"
     volumes:
       - type: bind
         source: "${TG_DATA_PATH:-/opt/telegram-personal-mcp/data}"
