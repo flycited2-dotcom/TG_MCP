@@ -107,11 +107,11 @@ def register_extensions(mcp,backend,oauth,scopes,call):
         import os,shutil
         from telethon.tl.alltlobjects import LAYER
         article_evidence=backend.article_publication_evidence()
-        return {'version':'2.2.0','telegram_layer':LAYER,'saved_messages_by_self_id':True,'native_rich_articles':True,
+        return {'version':'2.3.0','telegram_layer':LAYER,'saved_messages_by_self_id':True,'native_rich_articles':True,
                 'native_article_api_implemented':True,'native_article_publication_verified':article_evidence['verified'],
                 'native_article_acceptance_evidence':article_evidence,
                 'article_workflow':'Use create_article_draft and preview_article for one native rich message with original photos between blocks, then publish_article after approval. Check acceptance evidence separately from API implementation. Report the actual publication error; never substitute an HTML file, album or message series without separate user approval.',
-                'mcp_images':True,'mcp_file_resources':True,'chatgpt_file_params':True,'native_stories_api':True,'groups_folders_campaigns':{'public_search':True,'join_and_leave_chats':True,'folders':True,'campaigns':True,'daily_limits':backend.limits.as_dict()},'bot_interaction':{'keyboards':True,'button_press_reviewed':True,'wait_for_bot_reply':True,'voice_messages':True,'one_step_auto_confirm_allow_list_configured':bool(backend.bot_policy.rules)},
+                'mcp_images':True,'mcp_file_resources':True,'chatgpt_file_params':True,'native_stories_api':True,'chat_tools':{'chat_list_settings':True,'polls':True,'scheduled_messages':True,'chat_administration':True,'invite_links':True,'join_requests':True,'topics':True,'admin_log':True,'search_all_messages':True},'groups_folders_campaigns':{'public_search':True,'join_and_leave_chats':True,'folders':True,'campaigns':True,'daily_limits':backend.limits.as_dict()},'bot_interaction':{'keyboards':True,'button_press_reviewed':True,'wait_for_bot_reply':True,'voice_messages':True,'one_step_auto_confirm_allow_list_configured':bool(backend.bot_policy.rules)},
                 'max_transfer_bytes':files.max_bytes,'staging_quota_bytes':files.quota,'file_lifetime_seconds':86400,
                 'inline_binary_resource_limit_bytes':4*1024*1024,'draft_lifetime_seconds':600,
                 'ffmpeg_available':bool(shutil.which('ffmpeg')),'legacy_office_available':bool(shutil.which('libreoffice') or shutil.which('soffice')),

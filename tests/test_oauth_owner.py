@@ -281,3 +281,19 @@ def test_refresh_migrates_legacy_schema(oauth, tmp_path):
     from starlette.applications import Starlette as App
     with TestClient(App(routes=migrated.routes), base_url=migrated.public_url) as legacy_client:
         assert _refresh(migrated, legacy_client, "c", "legacy").status_code == 200
+
+
+def test_owner_can_grant_more_than_the_client_requested_and_all_boxes_are_shown(oauth):
+    server, client, _ = oauth
+    client_id = register(client)
+    fields, verifier, response = auth_form(server, client, client_id, scope="telegram.read telegram.send")
+    for name in ("allow_read", "allow_send", "allow_manage"):
+        assert f'name="{name}"' in response.text
+    assert re.search(r'name="allow_send"[^>]*checked', response.text) and not re.search(r'name="allow_manage"[^>]*checked', response.text)
+    fields.update(password="test-owner-password", allow_read="yes", allow_send="yes", allow_manage="yes", approve="yes")
+    redirect = client.post("/oauth/authorize", data=fields, follow_redirects=False)
+    assert redirect.status_code == 303
+    code = parse_qs(urlsplit(redirect.headers["location"]).query)["code"][0]
+    tokens = exchange(server, client, client_id, code, verifier).json()
+    assert set(tokens["scope"].split()) == {"telegram.read", "telegram.send", "telegram.manage"}
+    assert set(server.verify_token(tokens["access_token"])["scopes"]) == {"telegram.read", "telegram.send", "telegram.manage"}

@@ -373,14 +373,15 @@ class OwnerOAuth:
                          for key, value in data.items())
         hidden += f'<input type="hidden" name="csrf" value="{escape(self._csrf(data, nonce))}">'
         hidden += '<input type="hidden" name="approve" value="yes">'
-        permissions = ('<label><input type="checkbox" name="allow_read" value="yes" checked>'
-                       ' Читать доступные чаты, контакты и файлы Telegram</label><br>') if "telegram.read" in data["scope"].split() else ""
-        if "telegram.send" in data["scope"].split():
-            permissions += ('<label><input type="checkbox" name="allow_send" value="yes">'
-                            ' Отправлять сообщения от моего имени</label><br>')
-        if "telegram.manage" in data["scope"].split():
-            permissions += ('<label><input type="checkbox" name="allow_manage" value="yes">'
-                            ' Изменять контакты, группы, каналы и права участников</label><br>')
+        # All three permissions are always offered, so the owner can grant more than the client asked for.
+        # Those the client requested are pre-ticked; nothing else is, and read is always required.
+        requested = data["scope"].split()
+        permissions = "".join(
+            f'<label><input type="checkbox" name="{field}" value="yes"{" checked" if scope in requested else ""}> {label}</label><br>'
+            for field, scope, label in (
+                ("allow_read", "telegram.read", "Читать доступные чаты, контакты и файлы Telegram"),
+                ("allow_send", "telegram.send", "Отправлять сообщения от моего имени"),
+                ("allow_manage", "telegram.manage", "Управлять: вступать и выходить из групп, папки, контакты, права ботов, посты каналов")))
         if failed:
             error_message = "Неверный пароль. Попробуйте ещё раз."
         message = f'<p role="alert">{escape(error_message)}</p>' if error_message else ""
@@ -452,12 +453,10 @@ class OwnerOAuth:
             if supplied.get("approve") != "yes":
                 raise OAuthError("access_denied", 403, "approve_missing")
             scopes = []
-            if "telegram.read" in data["scope"].split() and supplied.get("allow_read") == "yes":
-                scopes.append("telegram.read")
-            if "telegram.send" in data["scope"].split() and supplied.get("allow_send") == "yes":
-                scopes.append("telegram.send")
-            if "telegram.manage" in data["scope"].split() and supplied.get("allow_manage") == "yes":
-                scopes.append("telegram.manage")
+            # The owner's explicit ticks decide, even above what the client requested.
+            for field, scope in (("allow_read", "telegram.read"), ("allow_send", "telegram.send"), ("allow_manage", "telegram.manage")):
+                if supplied.get(field) == "yes":
+                    scopes.append(scope)
             if not scopes:
                 raise OAuthError("access_denied", 403, "scopes_empty")
             if 'telegram.read' not in scopes:

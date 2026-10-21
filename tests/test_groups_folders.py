@@ -129,7 +129,10 @@ class GroupClient:
                 raise error
             return NS(updates=[])
         if isinstance(request,(f.messages.SendMessageRequest,f.messages.SendMediaRequest)):
-            key=utils.get_peer_id(request.peer)
+            try:
+                key=utils.get_peer_id(request.peer)
+            except TypeError:
+                key=None
             if key in self.send_errors:
                 raise self.send_errors[key]
             self.sent+=1
@@ -641,7 +644,7 @@ def tool(app,owner,scopes,name,arguments):
 def test_group_tools_are_listed_and_read_only_ones_are_marked(web):
     app,owner,_,_=web
     tools={x['name']:x for x in rpc(app,bearer(owner,['telegram.read']),'tools/list').json()['result']['tools']}
-    assert len(tools)==93
+    assert len(tools)==108
     reads=['telegram_list_chats','telegram_search_public_chats','telegram_inspect_chat','telegram_list_folders','telegram_get_folder','telegram_job_status','telegram_list_jobs','telegram_limits_status']
     prepares=['telegram_prepare_join_chats','telegram_prepare_leave_chats','telegram_prepare_folder_change','telegram_prepare_campaign']
     assert all(tools[name]['annotations']['readOnlyHint'] is True for name in reads+prepares)

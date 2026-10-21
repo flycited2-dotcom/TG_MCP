@@ -21,12 +21,13 @@ from chat_discovery import ChatDiscovery
 from folders import Folders
 from membership import Membership
 from campaigns import Campaigns
+from chat_tools import ChatTools
 from file_store import FileStore
 from telegram_backend import TelegramBackend, BackendError, _operation, _chat_id, _limit, _text, _user
 from tool_models import ArticleBlock, MediaItem, MessageOptions, ContactChange, GroupChange, StoryOptions
 
 
-MANAGE_ACTIONS=frozenset({'manage_contact','manage_group','bot_admin','edit_post','replace_post_media','delete_post','pin_post','botfather','join_chats','leave_chats','folder_change'})
+MANAGE_ACTIONS=frozenset({'manage_contact','manage_group','bot_admin','edit_post','replace_post_media','delete_post','pin_post','botfather','join_chats','leave_chats','folder_change','chat_setting','delete_dialogs','chat_admin_setting','invite_link','join_requests','topic_change','delete_chat_for_all','block_user'})
 
 
 def tl():
@@ -64,7 +65,7 @@ def returned_ids(result):
     return list(dict.fromkeys(found))
 
 
-class ExtendedBackend(BotInteraction,BotAdmin,ChannelPosts,InlineBots,BotFatherOps,Jobs,ChatDiscovery,Folders,Membership,Campaigns,TelegramBackend):
+class ExtendedBackend(BotInteraction,BotAdmin,ChannelPosts,InlineBots,BotFatherOps,Jobs,ChatDiscovery,Folders,Membership,Campaigns,ChatTools,TelegramBackend):
     def __init__(self,*args,files=None,actions=None,bot_policy=None,allow_botfather=None,limits=None,**kwargs):
         super().__init__(*args,**kwargs)
         self.limits=limits if limits is not None else Limits()
@@ -755,6 +756,8 @@ class ExtendedBackend(BotInteraction,BotAdmin,ChannelPosts,InlineBots,BotFatherO
             return await self._start_campaign(p)
         if action=='folder_change':
             return await self._folder_apply(p)
+        if action in self.CHAT_ACTIONS:
+            return await getattr(self,self.CHAT_ACTIONS[action])(p)
         if action=='botfather':
             return await self._botfather(p)
         if action=='manage_group':
@@ -821,6 +824,8 @@ class ExtendedBackend(BotInteraction,BotAdmin,ChannelPosts,InlineBots,BotFatherO
             return {'edited':True,'media_replaced':True,'chat':chat,'message_ids':p['message_ids']}
         elif action=='send_inline_result':
             result=await self._send_inline(p,peer)
+        elif action=='send_poll':
+            result=await self._client(f.messages.SendMediaRequest(peer=peer,media=self._poll_media(p),message='',random_id=p['random_id']))
         elif action=='pin_post':
             result=await self._client.pin_message(entity,p['message_ids'][0],notify=False) if not p['unpin'] else await self._client.unpin_message(entity,p['message_ids'][0])
             return {'changed':True,'action':'unpin' if p['unpin'] else 'pin','chat':chat,'message_ids':p['message_ids']}
