@@ -1,5 +1,6 @@
 """Telegram chat folders: list, inspect, create, rename, delete, add and remove chats (prepare -> preview -> execute)."""
 from __future__ import annotations
+import re
 
 from telegram_backend import BackendError,_operation,_text
 from bot_interaction import UNTRUSTED
@@ -11,6 +12,25 @@ def _tl():
     from telethon.tl import functions,types
     from telethon import utils
     return functions,types,utils
+
+
+def _rpc_code(error):
+    """The Telegram error identifier (such as FILTER_INCLUDE_EMPTY), taken from the message or the class name."""
+    message=str(getattr(error,'message','') or '')
+    if re.fullmatch(r'[A-Z][A-Z_]{2,63}',message):
+        return message
+    name=type(error).__name__
+    return re.sub(r'(?<!^)(?=[A-Z])','_',name[:-5] if name.endswith('Error') else name).upper()
+
+
+FOLDER_ERRORS={
+ 'FILTERS_TOO_MUCH':('folder_limit','Telegram says you already have the maximum number of folders (10, or 20 with Premium). If you have Premium, check that it is active on this account. Nothing was changed.'),
+ 'FILTER_INCLUDE_TOO_MUCH':('folder_chat_limit','Telegram says this folder already holds the maximum number of chats (100, or 200 with Premium). Nothing was changed.'),
+ 'FILTER_INCLUDE_EMPTY':('folder_needs_chats','Telegram does not allow a folder without chats. Add at least one chat. Nothing was changed.'),
+ 'FILTER_TITLE_EMPTY':('invalid_title','Telegram refused the folder name as empty or invalid. Nothing was changed.'),
+ 'FILTER_ID_INVALID':('invalid_folder_id','Telegram does not recognise this folder ID. Nothing was changed.'),
+ 'FILTER_NOT_SUPPORTED':('unsupported_operation','Telegram does not support this folder change for this account. Nothing was changed.'),
+}
 
 
 def _folder_title(folder):
@@ -104,6 +124,8 @@ class Folders:
                 raise BackendError('no_change','The folder already has this name.')
         if operation in ('add_chats','remove_chats') and not chat_ids:
             raise BackendError('invalid_input','Pass at least one chat ID.')
+        if operation=='create' and not chat_ids:
+            raise BackendError('invalid_input','Telegram does not allow an empty folder: pass chat_ids with at least one chat (find them with telegram_list_chats).')
         before=self._peer_ids(existing) if existing is not None else []
         if operation=='create':
             after=chat_ids
@@ -116,6 +138,9 @@ class Folders:
             if len(missing)==len(chat_ids):
                 raise BackendError('no_change','None of these chats is in the folder.')
             after=[chat_id for chat_id in before if chat_id not in chat_ids]
+            has_rules=any(getattr(existing,name,False) for name in ('contacts','non_contacts','groups','broadcasts','bots'))
+            if not after and not has_rules:
+                raise BackendError('folder_would_be_empty','Telegram does not allow a folder without chats. Delete the folder instead (operation delete).')
         elif operation=='delete':
             after=[]
         else:
@@ -127,6 +152,8 @@ class Folders:
                  'added':[{'chat_id':i,'title':name_of(i)} for i in after if i not in before],'removed':[{'chat_id':i,'title':name_of(i)} for i in before if i not in after],
                  'destructive':operation in ('delete','remove_chats'),'requires_manage_scope':True,
                  'note':'Chats themselves are not touched; only the folder changes.' if operation!='delete' else 'The folder is deleted; the chats stay in your chat list.','data_trust':UNTRUSTED}
+        if operation in ('create','rename') and len(name)>12:
+            preview['warnings']=['title_longer_than_12_characters: Telegram apps limit folder names to about 12 characters, so a longer name may be refused or cut.']
         payload={'action':'folder_change','operation':operation,'folder_id':existing.id if existing is not None else None,'title':title,'chat_ids':chat_ids,'emoticon':emoticon}
         return self.actions.prepare(payload,preview)
 
@@ -183,8 +210,10 @@ class Folders:
         except BackendError:
             raise
         except Exception as error:
-            if 'Filter' in type(error).__name__ or 'DIALOG_FILTER' in str(getattr(error,'message','')) or 'FILTER' in str(getattr(error,'message','')):
-                failure=BackendError('folder_limit','Telegram refused the folder change (too many folders or chats in a folder, or an invalid name). Nothing was changed.')
+            code=_rpc_code(error)
+            if code.startswith('FILTER') or code.startswith('DIALOG_FILTER'):
+                name,message=FOLDER_ERRORS.get(code,('folder_refused','Telegram refused the folder change. Nothing was changed.'))
+                failure=BackendError(name,message,diagnostics={'telegram_rpc_error':code})
                 failure.retry_safe=True
                 raise failure from None
             raise

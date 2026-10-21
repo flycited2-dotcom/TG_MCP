@@ -320,7 +320,7 @@ def test_rename_and_delete_and_telegram_folder_limits(world):
         failing=await engine.prepare_folder_change('add_chats',folder='Рассылки',chat_ids=[cid(client.news)])
         with pytest.raises(BackendError) as error:
             await do(engine,failing)
-        assert error.value.code=='folder_limit'
+        assert error.value.code=='folder_chat_limit' and error.value.diagnostics['telegram_rpc_error']=='FILTER_INCLUDE_TOO_MUCH'
         client.filter_error=None
         assert (await do(engine,failing))['changed']
         removal=await engine.prepare_folder_change('delete',folder='Рассылки')
@@ -691,3 +691,28 @@ def test_folder_tools_through_mcp(web):
     assert tool(app,owner,manage,'telegram_get_folder',{'folder':'Барахолки'})['count']==1
     assert tool(app,owner,manage,'telegram_search_public_chats',{'query':'крым'})['count']==4
     assert tool(app,owner,manage,'telegram_inspect_chat',{'target':'@ads_krym'})['requires_approval'] is True
+
+
+def test_empty_folders_are_refused_up_front_and_real_telegram_errors_are_named(world):
+    from telethon.errors import RPCError
+    engine,client=world
+    async def scenario():
+        with pytest.raises(BackendError) as error:
+            await engine.prepare_folder_change('create',title='Пустая')
+        assert error.value.code=='invalid_input' and 'empty folder' in str(error.value)
+        with pytest.raises(BackendError) as error:
+            await engine.prepare_folder_change('remove_chats',folder='Реклама',chat_ids=[cid(client.barakholka)])
+        assert error.value.code=='folder_would_be_empty'
+        long_name=await engine.prepare_folder_change('create',title='Реклама платная',chat_ids=[cid(client.news)])
+        assert 'title_longer_than_12_characters' in long_name['preview']['warnings'][0]
+        for raised,code,rpc in ((RPCError('x','FILTERS_TOO_MUCH',400),'folder_limit','FILTERS_TOO_MUCH'),(RPCError('x','FILTER_INCLUDE_EMPTY',400),'folder_needs_chats','FILTER_INCLUDE_EMPTY'),
+                                (type('FilterIncludeEmptyError',(Exception,),{})(),'folder_needs_chats','FILTER_INCLUDE_EMPTY'),(RPCError('x','FILTER_SOMETHING_NEW',400),'folder_refused','FILTER_SOMETHING_NEW')):
+            client.filter_error=raised
+            with pytest.raises(BackendError) as failure:
+                await do(engine,await engine.prepare_folder_change('create',title='Новая',chat_ids=[cid(client.news)]))
+            assert failure.value.code==code and failure.value.diagnostics['telegram_rpc_error']==rpc
+        client.filter_error=None
+        short=await engine.prepare_folder_change('create',title='Реклама2',chat_ids=[cid(client.news)])
+        assert 'warnings' not in short['preview']
+        return (await do(engine,short))['changed']
+    assert go(scenario()) is True

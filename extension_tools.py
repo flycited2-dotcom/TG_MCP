@@ -107,7 +107,7 @@ def register_extensions(mcp,backend,oauth,scopes,call):
         import os,shutil
         from telethon.tl.alltlobjects import LAYER
         article_evidence=backend.article_publication_evidence()
-        return {'version':'2.3.0','telegram_layer':LAYER,'saved_messages_by_self_id':True,'native_rich_articles':True,
+        return {'version':'2.3.1','telegram_layer':LAYER,'saved_messages_by_self_id':True,'native_rich_articles':True,
                 'native_article_api_implemented':True,'native_article_publication_verified':article_evidence['verified'],
                 'native_article_acceptance_evidence':article_evidence,
                 'article_workflow':'Use create_article_draft and preview_article for one native rich message with original photos between blocks, then publish_article after approval. Check acceptance evidence separately from API implementation. Report the actual publication error; never substitute an HTML file, album or message series without separate user approval.',

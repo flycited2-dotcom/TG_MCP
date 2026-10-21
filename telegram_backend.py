@@ -318,7 +318,7 @@ class TelegramBackend:
     async def status(self) -> dict[str, Any]:
         client = await self._ready()
         me = await client.get_me()
-        return {"connected": True, "authorized": True, "profile": _user(me), "sending_enabled": self.allow_send}
+        return {"connected": True, "authorized": True, "profile": _user(me), "sending_enabled": self.allow_send, "premium": bool(getattr(me, "premium", False))}
 
     @_operation
     async def find_chats(self, query: str, limit: int = 20) -> dict[str, Any]:
