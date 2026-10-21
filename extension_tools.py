@@ -107,11 +107,11 @@ def register_extensions(mcp,backend,oauth,scopes,call):
         import os,shutil
         from telethon.tl.alltlobjects import LAYER
         article_evidence=backend.article_publication_evidence()
-        return {'version':'2.1.2','telegram_layer':LAYER,'saved_messages_by_self_id':True,'native_rich_articles':True,
+        return {'version':'2.2.0','telegram_layer':LAYER,'saved_messages_by_self_id':True,'native_rich_articles':True,
                 'native_article_api_implemented':True,'native_article_publication_verified':article_evidence['verified'],
                 'native_article_acceptance_evidence':article_evidence,
                 'article_workflow':'Use create_article_draft and preview_article for one native rich message with original photos between blocks, then publish_article after approval. Check acceptance evidence separately from API implementation. Report the actual publication error; never substitute an HTML file, album or message series without separate user approval.',
-                'mcp_images':True,'mcp_file_resources':True,'chatgpt_file_params':True,'native_stories_api':True,'bot_interaction':{'keyboards':True,'button_press_reviewed':True,'wait_for_bot_reply':True,'voice_messages':True,'one_step_auto_confirm_allow_list_configured':bool(backend.bot_policy.rules)},
+                'mcp_images':True,'mcp_file_resources':True,'chatgpt_file_params':True,'native_stories_api':True,'groups_folders_campaigns':{'public_search':True,'join_and_leave_chats':True,'folders':True,'campaigns':True,'daily_limits':backend.limits.as_dict()},'bot_interaction':{'keyboards':True,'button_press_reviewed':True,'wait_for_bot_reply':True,'voice_messages':True,'one_step_auto_confirm_allow_list_configured':bool(backend.bot_policy.rules)},
                 'max_transfer_bytes':files.max_bytes,'staging_quota_bytes':files.quota,'file_lifetime_seconds':86400,
                 'inline_binary_resource_limit_bytes':4*1024*1024,'draft_lifetime_seconds':600,
                 'ffmpeg_available':bool(shutil.which('ffmpeg')),'legacy_office_available':bool(shutil.which('libreoffice') or shutil.which('soffice')),
@@ -342,6 +342,8 @@ def register_extensions(mcp,backend,oauth,scopes,call):
             result=await call(backend.execute_action,draft_id,confirmation_hash)
             if 'error' not in result and wait_reply_s:
                 result=await backend.collect_replies(result,wait_reply_s)
+            if 'error' not in result:
+                result=await backend.collect_job(result)
             return result
         except BackendError as error:
             return error.as_dict()
@@ -356,13 +358,14 @@ def register_extensions(mcp,backend,oauth,scopes,call):
 
     @mcp.tool(name='telegram_execute_management_action',annotations=write,meta={'securitySchemes':[{'type':'oauth2','scopes':['telegram.read','telegram.manage']}]})
     async def execute_management(draft_id:str,confirmation_hash:Annotated[str,Field(pattern=r'^[a-f0-9]{64}$')])->dict[str,Any]:
-        """Execute ONLY a management draft explicitly approved after reviewing every change: contacts, groups/channels, bot administrator rights, channel post edits/deletions/pins, and @BotFather changes. Requires separate telegram.manage consent; cannot use message-sending permission to alter administrators or contacts."""
+        """Execute ONLY a management draft explicitly approved after reviewing every change: contacts, groups/channels, bot administrator rights, channel post edits/deletions/pins, @BotFather changes, joining or leaving chats and folder changes. Joins and leaves run as background jobs: a one-chat action usually finishes within the call, otherwise follow job_id with telegram_job_status. Requires separate telegram.manage consent; cannot use message-sending permission to alter administrators or contacts."""
         try:
             if backend.required_scope(draft_id)!='telegram.manage':
                 return {'error':'invalid_action','message':'Use telegram_execute_action for this message/media action.'}
             if 'telegram.manage' not in scopes.get():
                 return {'error':'insufficient_scope','message':'Reconnect and authorize telegram.manage.'}
-            return await call(backend.execute_action,draft_id,confirmation_hash)
+            result=await call(backend.execute_action,draft_id,confirmation_hash)
+            return result if 'error' in result else await backend.collect_job(result)
         except BackendError as error:
             return error.as_dict()
 

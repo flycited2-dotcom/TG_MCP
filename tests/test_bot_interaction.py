@@ -447,7 +447,7 @@ def test_new_tools_are_listed_with_untrusted_data_warnings(web):
     tools={x['name']:x for x in rpc(app,bearer(owner,['telegram.read']),'tools/list').json()['result']['tools']}
     for name in ('telegram_get_keyboard','telegram_get_reply_keyboard','telegram_get_bot_info','telegram_wait_for_bot_reply','telegram_prepare_press_button','telegram_prepare_voice'):
         assert name in tools
-    assert len(tools)==80
+    assert len(tools)==93
     assert tools['telegram_get_keyboard']['annotations']['readOnlyHint'] is True
     assert tools['telegram_prepare_press_button']['annotations']['readOnlyHint'] is False
     assert 'untrusted' in tools['telegram_get_keyboard']['description'] and 'untrusted' in tools['telegram_wait_for_bot_reply']['description']

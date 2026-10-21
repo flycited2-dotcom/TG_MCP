@@ -16,12 +16,17 @@ from bot_admin import BotAdmin
 from channel_posts import ChannelPosts
 from bot_inline import InlineBots
 from botfather import BotFatherOps,guard_recipient,is_botfather,redact
+from jobs import Jobs,Limits
+from chat_discovery import ChatDiscovery
+from folders import Folders
+from membership import Membership
+from campaigns import Campaigns
 from file_store import FileStore
 from telegram_backend import TelegramBackend, BackendError, _operation, _chat_id, _limit, _text, _user
 from tool_models import ArticleBlock, MediaItem, MessageOptions, ContactChange, GroupChange, StoryOptions
 
 
-MANAGE_ACTIONS=frozenset({'manage_contact','manage_group','bot_admin','edit_post','replace_post_media','delete_post','pin_post','botfather'})
+MANAGE_ACTIONS=frozenset({'manage_contact','manage_group','bot_admin','edit_post','replace_post_media','delete_post','pin_post','botfather','join_chats','leave_chats','folder_change'})
 
 
 def tl():
@@ -59,9 +64,10 @@ def returned_ids(result):
     return list(dict.fromkeys(found))
 
 
-class ExtendedBackend(BotInteraction,BotAdmin,ChannelPosts,InlineBots,BotFatherOps,TelegramBackend):
-    def __init__(self,*args,files=None,actions=None,bot_policy=None,allow_botfather=None,**kwargs):
+class ExtendedBackend(BotInteraction,BotAdmin,ChannelPosts,InlineBots,BotFatherOps,Jobs,ChatDiscovery,Folders,Membership,Campaigns,TelegramBackend):
+    def __init__(self,*args,files=None,actions=None,bot_policy=None,allow_botfather=None,limits=None,**kwargs):
         super().__init__(*args,**kwargs)
+        self.limits=limits if limits is not None else Limits()
         self.allow_botfather=os.environ.get('TG_ALLOW_BOTFATHER','false').strip().lower() in {'1','true','yes'} if allow_botfather is None else bool(allow_botfather)
         self.bot_policy=bot_policy if bot_policy is not None else BotPolicy.from_env()
         self.audit=AuditLog(self.drafts_db.parent/'audit.sqlite',self._clock)
@@ -741,6 +747,14 @@ class ExtendedBackend(BotInteraction,BotAdmin,ChannelPosts,InlineBots,BotFatherO
             return await self._press(p)
         if action=='bot_admin':
             return await self._bot_admin(p)
+        if action=='join_chats':
+            return await self._start_join(p)
+        if action=='leave_chats':
+            return await self._start_leave(p)
+        if action=='campaign':
+            return await self._start_campaign(p)
+        if action=='folder_change':
+            return await self._folder_apply(p)
         if action=='botfather':
             return await self._botfather(p)
         if action=='manage_group':

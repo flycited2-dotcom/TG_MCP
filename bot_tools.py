@@ -7,6 +7,7 @@ from mcp.types import ToolAnnotations
 from tool_models import MediaItem,MessageOptions
 from telegram_backend import BackendError
 from bot_tools_admin import register_admin_tools
+from bot_tools_groups import register_group_tools
 
 
 def register_bot_tools(mcp,backend,scopes,call):
@@ -78,3 +79,4 @@ def register_bot_tools(mcp,backend,scopes,call):
         return await finish(draft,auto_confirm,0)
 
     register_admin_tools(mcp,backend,scopes,call)
+    register_group_tools(mcp,backend,scopes,call)

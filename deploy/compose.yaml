@@ -25,6 +25,12 @@ services:
       TG_BOT_FASTPATH_FILE: "/data/bot-fastpath.json"
       # Off by default: lets agents change the owner's own bots through @BotFather (never /token, /revoke, /deletebot).
       TG_ALLOW_BOTFATHER: "${TG_ALLOW_BOTFATHER:-false}"
+      # Owner-only caps for joins, leaves and campaign messages (per 24 hours) and campaign size; agents cannot raise them.
+      TG_JOIN_DAILY_LIMIT: "${TG_JOIN_DAILY_LIMIT:-10}"
+      TG_LEAVE_DAILY_LIMIT: "${TG_LEAVE_DAILY_LIMIT:-30}"
+      TG_CAMPAIGN_DAILY_LIMIT: "${TG_CAMPAIGN_DAILY_LIMIT:-20}"
+      TG_CAMPAIGN_MAX_CHATS: "${TG_CAMPAIGN_MAX_CHATS:-30}"
+      TG_CAMPAIGN_MIN_DELAY: "${TG_CAMPAIGN_MIN_DELAY:-45}"
     volumes:
       - type: bind
         source: "${TG_DATA_PATH:-/opt/telegram-personal-mcp/data}"
