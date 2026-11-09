@@ -15,6 +15,7 @@ from file_downloads import DownloadStore
 from upload_routes import UploadRoutes
 from media_processing import image_preview,read_document,probe_media,transcribe,synthesize,audio_preview,video_frames
 from bot_tools import register_bot_tools
+from media_import import register_media_import
 
 
 def register_extensions(mcp,backend,oauth,scopes,call):
@@ -107,7 +108,7 @@ def register_extensions(mcp,backend,oauth,scopes,call):
         import os,shutil
         from telethon.tl.alltlobjects import LAYER
         article_evidence=backend.article_publication_evidence()
-        return {'version':'2.3.1','telegram_layer':LAYER,'saved_messages_by_self_id':True,'native_rich_articles':True,
+        return {'version':'2.4.0','telegram_layer':LAYER,'saved_messages_by_self_id':True,'native_rich_articles':True,
                 'native_article_api_implemented':True,'native_article_publication_verified':article_evidence['verified'],
                 'native_article_acceptance_evidence':article_evidence,
                 'article_workflow':'Use create_article_draft and preview_article for one native rich message with original photos between blocks, then publish_article after approval. Check acceptance evidence separately from API implementation. Report the actual publication error; never substitute an HTML file, album or message series without separate user approval.',
@@ -479,4 +480,5 @@ def register_extensions(mcp,backend,oauth,scopes,call):
         return await call(backend.prepare_group,change.model_dump(),chat_id)
 
     register_bot_tools(mcp,backend,scopes,call)
-    return routes.routes+downloads.routes
+    media_routes=register_media_import(mcp,backend,call)
+    return routes.routes+downloads.routes+media_routes

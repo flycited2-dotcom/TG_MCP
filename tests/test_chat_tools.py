@@ -464,7 +464,7 @@ def tool(app,owner,scopes,name,arguments):
 def test_new_chat_tools_are_listed_and_scoped_correctly(web):
     app,owner,engine,client=web
     tools={x['name']:x for x in rpc(app,bearer(owner,['telegram.read']),'tools/list').json()['result']['tools']}
-    assert len(tools)==108
+    assert len(tools)==110
     names=['telegram_search_all_messages','telegram_get_scheduled','telegram_prepare_delete_scheduled','telegram_prepare_poll','telegram_prepare_chat_setting','telegram_prepare_delete_chats',
            'telegram_prepare_chat_admin_setting','telegram_list_invite_links','telegram_prepare_invite_link','telegram_list_join_requests','telegram_prepare_join_requests_decision',
            'telegram_prepare_topic_change','telegram_get_admin_log','telegram_prepare_delete_chat_for_all','telegram_prepare_block_user']

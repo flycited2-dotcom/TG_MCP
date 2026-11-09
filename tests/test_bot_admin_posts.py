@@ -645,7 +645,7 @@ def test_botfather_and_inline_tools_through_mcp(web):
 def test_every_new_tool_is_listed_with_safe_annotations(web):
     app,owner,_,_=web
     tools={x['name']:x for x in rpc(app,bearer(owner,['telegram.read']),'tools/list').json()['result']['tools']}
-    assert len(tools)==108
+    assert len(tools)==110
     reads=['telegram_list_admins','telegram_get_post_stats','telegram_inline_query']
     prepares=['telegram_prepare_add_bot_admin','telegram_prepare_edit_bot_rights','telegram_prepare_demote_bot','telegram_prepare_remove_bot','telegram_prepare_set_bot_title',
               'telegram_prepare_publish_post','telegram_prepare_edit_post_text','telegram_prepare_replace_post_media','telegram_prepare_delete_post','telegram_prepare_pin_post',

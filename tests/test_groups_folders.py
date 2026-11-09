@@ -345,7 +345,7 @@ def test_join_is_previewed_then_runs_as_a_paced_job(world):
     assert result['started'] and result['job']['state']=='done' and result['job']['counts']=={'joined':2}
     assert len(sent_requests(client,f.channels.JoinChannelRequest))==1 and len(sent_requests(client,f.messages.ImportChatInviteRequest))==1
     assert result['job']['steps'][0]['chat_id']==cid(client.joinable)
-    assert engine.limits_status()['used_last_24h']['joins']==2 and engine.limits_status()['remaining_24h']['joins']==8
+    assert engine.limits_status()['used_last_24h']['joins']==2 and engine.limits_status()['remaining_24h']['joins']=='unlimited'
 
 
 def test_join_outcomes_requests_existing_membership_and_bad_links(world):
@@ -621,7 +621,7 @@ def test_campaign_with_a_photo_and_rights_are_rechecked_at_send_time(world):
 
 
 def test_limits_are_read_from_the_environment_and_clamped():
-    assert Limits({}).as_dict()=={'joins_per_day':10,'leaves_per_day':30,'campaign_messages_per_day':20,'campaign_max_chats':30,'min_pause_seconds':45,'same_text_pause_days':14}
+    assert Limits({}).as_dict()=={'joins_per_day':0,'leaves_per_day':30,'campaign_messages_per_day':20,'campaign_max_chats':30,'min_pause_seconds':45,'same_text_pause_days':14}
     custom=Limits({'TG_JOIN_DAILY_LIMIT':'3','TG_CAMPAIGN_DAILY_LIMIT':'junk','TG_CAMPAIGN_MAX_CHATS':'100000','TG_CAMPAIGN_MIN_DELAY':'-5'})
     assert custom.join_daily==3 and custom.message_daily==20 and custom.campaign_max_chats==200 and custom.min_delay==0
 
@@ -644,7 +644,7 @@ def tool(app,owner,scopes,name,arguments):
 def test_group_tools_are_listed_and_read_only_ones_are_marked(web):
     app,owner,_,_=web
     tools={x['name']:x for x in rpc(app,bearer(owner,['telegram.read']),'tools/list').json()['result']['tools']}
-    assert len(tools)==108
+    assert len(tools)==110
     reads=['telegram_list_chats','telegram_search_public_chats','telegram_inspect_chat','telegram_list_folders','telegram_get_folder','telegram_job_status','telegram_list_jobs','telegram_limits_status']
     prepares=['telegram_prepare_join_chats','telegram_prepare_leave_chats','telegram_prepare_folder_change','telegram_prepare_campaign']
     assert all(tools[name]['annotations']['readOnlyHint'] is True for name in reads+prepares)

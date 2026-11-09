@@ -7,7 +7,7 @@ from chat_discovery import parse_target,chat_type
 
 JOIN_PAUSE=(20,60)
 LEAVE_PAUSE=(5,15)
-MAX_JOIN=10
+MAX_JOIN=50
 MAX_LEAVE=30
 
 
@@ -45,7 +45,7 @@ class Membership:
         steps=[{'kind':row['kind'],'target':row['target'],'title':row['title'],**({'name':row['name']} if row['kind']=='username' else {'hash':row['hash']})} for row in joining]
         shown=[{key:value for key,value in row.items() if key not in ('hash',)} for row in rows]
         preview={'action':'join_chats','chats':shown,'will_join':len(joining),'requires_approval_count':sum(1 for row in joining if row['requires_approval']),
-                 'pause_between_seconds':list(JOIN_PAUSE),'limits':{'joins_left_today_after':self.limits.join_daily-self._ledger().used('join')-len(joining)},
+                 'pause_between_seconds':list(JOIN_PAUSE),'limits':{'joins_left_today_after':self.limits.join_daily-self._ledger().used('join')-len(joining) if self.limits.join_daily else 'unlimited'},
                  'effect':'Joins as the account owner; some groups only receive a join request. Joins run one by one in the background.',
                  'requires_manage_scope':True,'data_trust':UNTRUSTED}
         payload={'action':'join_chats','steps':steps}

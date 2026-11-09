@@ -17,7 +17,7 @@ RUN python -m pip install --no-cache-dir -r requirements.txt \
 # Explicit copies keep local sessions, exports and credentials out of the image.
 COPY server.py telegram_backend.py oauth_owner.py file_downloads.py ./
 COPY tool_models.py file_store.py action_store.py extended_backend.py \
-     media_processing.py upload_routes.py extension_tools.py \n     request_context.py bot_interaction.py bot_tools.py bot_admin.py channel_posts.py \n     bot_inline.py botfather.py bot_tools_admin.py jobs.py chat_discovery.py folders.py \n     membership.py campaigns.py bot_tools_groups.py chat_tools.py bot_tools_chats.py ./
+     media_processing.py upload_routes.py extension_tools.py \n     request_context.py bot_interaction.py bot_tools.py bot_admin.py channel_posts.py \n     bot_inline.py botfather.py bot_tools_admin.py jobs.py chat_discovery.py folders.py \n     membership.py campaigns.py bot_tools_groups.py chat_tools.py bot_tools_chats.py media_import.py ./
 
 USER 10001:10001
 EXPOSE 8000

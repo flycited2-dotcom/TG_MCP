@@ -28,8 +28,8 @@ def register_group_tools(mcp,backend,scopes,call):
         return await call(backend.inspect_chat,target)
 
     @mcp.tool(name='telegram_prepare_join_chats',annotations=local,meta=read_meta)
-    async def prepare_join_chats(targets:Annotated[list[str],Field(min_length=1,max_length=10)])->dict[str,Any]:
-        """Prepare joining up to 10 chats (@username, t.me link or invite link) as the account owner. The preview shows each chat, whether approval by admins is needed and the daily limit left (set by the server owner). One approval covers the list; joins then run one by one with pauses in the background, so check telegram_job_status. Needs telegram.manage: execute with telegram_execute_management_action after the user approved the list. Where admins must approve, the request is sent and the status is request_sent."""
+    async def prepare_join_chats(targets:Annotated[list[str],Field(min_length=1,max_length=50)])->dict[str,Any]:
+        """Prepare joining up to 50 chats (@username, t.me link or invite link) as the account owner. The preview shows each chat, whether approval by admins is needed and the daily limit left if the server owner set one. One approval covers the list; joins then run one by one with pauses in the background, so check telegram_job_status. Needs telegram.manage: execute with telegram_execute_management_action after the user approved the list. Where admins must approve, the request is sent and the status is request_sent."""
         return await call(backend.prepare_join_chats,targets)
 
     @mcp.tool(name='telegram_prepare_leave_chats',annotations=local,meta=read_meta)

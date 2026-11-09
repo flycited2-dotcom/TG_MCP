@@ -35,7 +35,8 @@ class Limits:
 
     def __init__(self,env=None):
         env=os.environ if env is None else env
-        self.join_daily=_int(env,'TG_JOIN_DAILY_LIMIT',10,0,200)
+        # 0 means no daily cap on joins (the owner sets a number when wanted); Telegram's own flood limits still stop a job.
+        self.join_daily=_int(env,'TG_JOIN_DAILY_LIMIT',0,0,100000)
         self.leave_daily=_int(env,'TG_LEAVE_DAILY_LIMIT',30,0,500)
         self.message_daily=_int(env,'TG_CAMPAIGN_DAILY_LIMIT',20,0,500)
         self.campaign_max_chats=_int(env,'TG_CAMPAIGN_MAX_CHATS',30,1,200)
@@ -203,6 +204,8 @@ class Jobs:
             raise
 
     def check_quota(self,kind,wanted,limit):
+        if kind=='join' and not limit:
+            return
         used=self._ledger().used(kind)
         if used+wanted>limit:
             raise BackendError('daily_limit_reached',f'The daily limit for this action is {limit} per 24 hours; {used} already used, {wanted} requested. The server owner sets the limit.',
@@ -283,7 +286,7 @@ class Jobs:
     def limits_status(self):
         ledger=self._ledger()
         used={'joins':ledger.used('join'),'leaves':ledger.used('leave'),'campaign_messages':ledger.used('message')}
-        remaining={'joins':max(0,self.limits.join_daily-used['joins']),'leaves':max(0,self.limits.leave_daily-used['leaves']),
+        remaining={'joins':max(0,self.limits.join_daily-used['joins']) if self.limits.join_daily else 'unlimited','leaves':max(0,self.limits.leave_daily-used['leaves']),
                    'campaign_messages':max(0,self.limits.message_daily-used['campaign_messages'])}
         return {'limits':self.limits.as_dict(),'used_last_24h':used,'remaining_24h':remaining,'running_job':self._jobs().running(),
                 'note':'Limits protect the account from Telegram restrictions and can be changed only by the server owner.'}

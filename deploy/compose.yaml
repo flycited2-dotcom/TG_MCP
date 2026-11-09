@@ -26,7 +26,7 @@ services:
       # Off by default: lets agents change the owner's own bots through @BotFather (never /token, /revoke, /deletebot).
       TG_ALLOW_BOTFATHER: "${TG_ALLOW_BOTFATHER:-false}"
       # Owner-only caps for joins, leaves and campaign messages (per 24 hours) and campaign size; agents cannot raise them.
-      TG_JOIN_DAILY_LIMIT: "${TG_JOIN_DAILY_LIMIT:-10}"
+      TG_JOIN_DAILY_LIMIT: "${TG_JOIN_DAILY_LIMIT:-0}"
       TG_LEAVE_DAILY_LIMIT: "${TG_LEAVE_DAILY_LIMIT:-30}"
       TG_CAMPAIGN_DAILY_LIMIT: "${TG_CAMPAIGN_DAILY_LIMIT:-20}"
       TG_CAMPAIGN_MAX_CHATS: "${TG_CAMPAIGN_MAX_CHATS:-30}"
